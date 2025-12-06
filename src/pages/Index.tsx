@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Music, Scissors, Download, Sparkles } from "lucide-react";
 
-// Placeholder images for demo
+// Placeholder images for demo (Used because the Colab script currently only returns audio)
 const DEMO_IMAGES = [
   "https://images.unsplash.com/photo-1614149162883-504ce4d13909?w=800&q=80",
   "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&q=80",
@@ -33,15 +33,39 @@ const Index = () => {
 
   const handleGenerate = async (prompt: string) => {
     setIsGenerating(true);
-    toast.info("Generating your creation...", {
-      description: "This may take a moment",
+    toast.info("Connecting to AI Brain...", {
+      description: "Generating high-quality audio takes about 20-30 seconds.",
     });
 
-    // Simulate generation (replace with actual API call)
-    setTimeout(() => {
+    try {
+      // ------------------------------------------------------------------
+      // 👇👇👇 PASTE YOUR COLAB NGROK URL HERE 👇👇👇
+      // Example: "https://a1b2-34-56.ngrok-free.app/generate"
+      const API_URL = "https://javon-nonvenal-terrie.ngrok-free.dev/generate"; 
+      // ------------------------------------------------------------------
+
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          prompt: prompt,
+          duration: 15 // Duration in seconds
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server Error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // data.audio is a base64 string from Colab
+      // We pick a random image because the current backend only generates music
+      const randomImage = DEMO_IMAGES[Math.floor(Math.random() * DEMO_IMAGES.length)];
+
       const newResult = {
-        imageUrl: DEMO_IMAGES[Math.floor(Math.random() * DEMO_IMAGES.length)],
-        audioUrl: "/demo-audio.mp3",
+        imageUrl: randomImage,
+        audioUrl: data.audio, // Real audio from AI!
         prompt,
       };
       
@@ -54,15 +78,22 @@ const Index = () => {
         imageUrl: newResult.imageUrl,
         audioUrl: newResult.audioUrl,
         createdAt: new Date(),
-        duration: "0:30",
+        duration: "0:15",
       };
       setPlaylist((prev) => [newItem, ...prev]);
       
-      setIsGenerating(false);
       toast.success("Creation complete!", {
-        description: "Added to your playlist",
+        description: "AI Music generated successfully.",
       });
-    }, 3000);
+
+    } catch (error) {
+      console.error("Generation failed:", error);
+      toast.error("Generation Failed", {
+        description: "Check if Colab is running and the Ngrok URL is correct.",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handlePlayItem = (item: PlaylistItem) => {
