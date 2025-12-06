@@ -1,7 +1,8 @@
-import { Play, Pause, Download, Volume2, VolumeX } from "lucide-react";
+import { Play, Pause, Download, Volume2, VolumeX, Maximize2, Repeat } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider"; // If you don't have this, standard input is used below
+import { Slider } from "@/components/ui/slider";
+import { toast } from "sonner";
 
 interface OutputDisplayProps {
   imageUrl?: string;
@@ -15,10 +16,11 @@ export const OutputDisplay = ({ imageUrl, audioUrl, prompt }: OutputDisplayProps
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize Audio Logic
+  // --- Audio Logic ---
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -28,31 +30,35 @@ export const OutputDisplay = ({ imageUrl, audioUrl, prompt }: OutputDisplayProps
     if (audioUrl) {
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
-
-      // Event Listeners
-      audio.addEventListener("loadedmetadata", () => {
-        setDuration(audio.duration);
-      });
-      
-      audio.addEventListener("timeupdate", () => {
-        setCurrentTime(audio.currentTime);
-      });
-
-      audio.addEventListener("ended", () => {
-        setIsPlaying(false);
-        setCurrentTime(0);
-      });
-
       audio.volume = volume;
 
+      const setAudioData = () => {
+        setDuration(audio.duration);
+      };
+
+      const setAudioTime = () => {
+        setCurrentTime(audio.currentTime);
+      };
+
+      const handleEnded = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+      };
+
+      // Events
+      audio.addEventListener("loadedmetadata", setAudioData);
+      audio.addEventListener("timeupdate", setAudioTime);
+      audio.addEventListener("ended", handleEnded);
+
       return () => {
+        audio.removeEventListener("loadedmetadata", setAudioData);
+        audio.removeEventListener("timeupdate", setAudioTime);
+        audio.removeEventListener("ended", handleEnded);
         audio.pause();
-        audio.remove();
       };
     }
   }, [audioUrl]);
 
-  // Handle Play/Pause
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
@@ -63,18 +69,16 @@ export const OutputDisplay = ({ imageUrl, audioUrl, prompt }: OutputDisplayProps
     setIsPlaying(!isPlaying);
   };
 
-  // Handle Seeking (Scrubbing)
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSeek = (value: number[]) => {
     if (!audioRef.current) return;
-    const time = parseFloat(e.target.value);
+    const time = value[0];
     audioRef.current.currentTime = time;
     setCurrentTime(time);
   };
 
-  // Handle Volume
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVolumeChange = (value: number[]) => {
     if (!audioRef.current) return;
-    const vol = parseFloat(e.target.value);
+    const vol = value[0];
     setVolume(vol);
     audioRef.current.volume = vol;
     setIsMuted(vol === 0);
@@ -91,7 +95,6 @@ export const OutputDisplay = ({ imageUrl, audioUrl, prompt }: OutputDisplayProps
     }
   };
 
-  // Format time helper (e.g., 125s -> "2:05")
   const formatTime = (time: number) => {
     if (isNaN(time)) return "0:00";
     const minutes = Math.floor(time / 60);
@@ -107,142 +110,151 @@ export const OutputDisplay = ({ imageUrl, audioUrl, prompt }: OutputDisplayProps
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    toast.success(`Downloaded ${type} successfully`);
   };
 
   if (!imageUrl && !audioUrl) return null;
 
   return (
-    <div className="w-full max-w-4xl mx-auto mt-12 animate-fade-in">
-      <div className="glass-card p-6 md:p-8">
-        {prompt && (
-          <p className="text-sm text-muted-foreground mb-6 italic border-l-2 border-primary pl-3">
-            "{prompt}"
-          </p>
-        )}
-        
-        <div className="grid md:grid-cols-2 gap-8">
-          {/* --- LEFT: Image Output --- */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">Visual Art</h3>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => handleDownload(imageUrl, 'image')}
-                className="hover:bg-primary/10"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Save Image
-              </Button>
-            </div>
-            <div className="relative aspect-square rounded-xl overflow-hidden bg-muted/30 border border-border/50 shadow-inner group">
+    <div className="w-full max-w-5xl mx-auto mt-12 animate-fade-in px-4">
+      {/* Main Player Card */}
+      <div 
+        className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-2xl transition-all duration-500"
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={() => setIsHovering(false)}
+      >
+        {/* Dynamic Background Glow based on Image */}
+        <div className="absolute inset-0 z-0">
+          <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-transparent z-10" />
+          {imageUrl && (
+            <img 
+              src={imageUrl} 
+              alt="background" 
+              className="w-full h-full object-cover opacity-30 blur-3xl scale-110"
+            />
+          )}
+        </div>
+
+        <div className="relative z-20 p-6 md:p-10 flex flex-col md:flex-row gap-8 items-center md:items-end">
+          
+          {/* --- Album Art (Left) --- */}
+          <div className="relative group shrink-0">
+            <div className={`relative w-48 h-48 md:w-64 md:h-64 rounded-xl overflow-hidden shadow-2xl border border-white/10 transition-transform duration-700 ${isPlaying ? 'scale-[1.02]' : 'scale-100'}`}>
               {imageUrl ? (
-                <>
-                  <img
-                    src={imageUrl}
-                    alt="AI Generated"
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors" />
-                </>
+                <img
+                  src={imageUrl}
+                  alt="Album Art"
+                  className="w-full h-full object-cover"
+                />
               ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 animate-pulse" />
-                </div>
+                <div className="w-full h-full bg-gradient-to-br from-primary/20 to-purple-900/20 animate-pulse" />
               )}
+              
+              {/* Overlay Download Button for Image */}
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="rounded-full bg-black/50 border-white/20 text-white hover:bg-white hover:text-black transition-all"
+                  onClick={() => handleDownload(imageUrl, 'image')}
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Save Art
+                </Button>
+              </div>
             </div>
           </div>
 
-          {/* --- RIGHT: Music Player --- */}
-          <div className="flex flex-col h-full justify-between space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">Audio Track</h3>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => handleDownload(audioUrl, 'audio')}
-                disabled={!audioUrl}
-                className="hover:bg-primary/10"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Save Audio
-              </Button>
+          {/* --- Controls & Metadata (Right) --- */}
+          <div className="flex-1 w-full flex flex-col gap-6">
+            
+            {/* Metadata */}
+            <div className="space-y-2 text-center md:text-left">
+              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/20 text-primary border border-primary/20 mb-2">
+                New Generation
+              </div>
+              <h2 className="text-2xl md:text-4xl font-bold text-white tracking-tight line-clamp-1" title={prompt}>
+                {prompt || "Untitled Track"}
+              </h2>
+              <p className="text-muted-foreground text-sm font-medium tracking-wide uppercase">
+                AI Generated • {new Date().getFullYear()}
+              </p>
             </div>
 
-            {/* Visualizer Container */}
-            <div className="relative flex-1 min-h-[200px] rounded-xl overflow-hidden bg-gradient-to-br from-background to-secondary/10 border border-border/50 flex flex-col items-center justify-center p-6 shadow-sm">
+            {/* Progress Bar */}
+            <div className="space-y-2 w-full">
+              <Slider
+                value={[currentTime]}
+                min={0}
+                max={duration || 100}
+                step={0.1}
+                onValueChange={handleSeek}
+                className="cursor-pointer"
+              />
+              <div className="flex justify-between text-xs font-medium text-muted-foreground">
+                <span>{formatTime(currentTime)}</span>
+                <span>{formatTime(duration)}</span>
+              </div>
+            </div>
+
+            {/* Playback Controls Row */}
+            <div className="flex items-center justify-between">
               
-              {/* Animated Bars */}
-              <div className="flex items-end gap-1.5 h-24 mb-6">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-2 bg-gradient-to-t from-primary to-purple-500 rounded-full transition-all duration-300"
-                    style={{
-                      height: isPlaying 
-                        ? `${Math.random() * 80 + 20}%` 
-                        : "20%",
-                      opacity: isPlaying ? 1 : 0.5,
-                      animationDelay: `${i * 0.05}s`,
-                    }}
-                  />
-                ))}
+              {/* Left Side: Volume */}
+              <div className="hidden md:flex items-center gap-3 w-32 group">
+                <button 
+                  onClick={toggleMute} 
+                  className="text-muted-foreground hover:text-white transition-colors"
+                >
+                  {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                </button>
+                <Slider
+                  value={[isMuted ? 0 : volume]}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onValueChange={handleVolumeChange}
+                  className="w-20 transition-opacity opacity-50 group-hover:opacity-100"
+                />
               </div>
 
-              {/* Player Controls */}
-              <div className="w-full space-y-4">
-                {/* Progress Bar */}
-                <div className="space-y-2">
-                  <input
-                    type="range"
-                    min="0"
-                    max={duration || 100}
-                    value={currentTime}
-                    onChange={handleSeek}
-                    className="w-full h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary hover:accent-primary/80 transition-all"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground font-mono">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
-                  </div>
-                </div>
+              {/* Center: Main Controls */}
+              <div className="flex items-center gap-6">
+                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-white hidden sm:flex">
+                  <Repeat className="w-5 h-5" />
+                </Button>
 
-                {/* Control Row */}
-                <div className="flex items-center justify-between gap-4 mt-2">
-                  
-                  {/* Play Button */}
-                  <Button
-                    variant="default"
-                    size="icon"
-                    className="w-12 h-12 rounded-full shadow-lg shadow-primary/20 hover:scale-105 transition-transform"
-                    onClick={togglePlay}
-                    disabled={!audioUrl}
-                  >
-                    {isPlaying ? (
-                      <Pause className="w-5 h-5 fill-current" />
-                    ) : (
-                      <Play className="w-5 h-5 ml-1 fill-current" />
-                    )}
-                  </Button>
+                <Button
+                  size="icon"
+                  className="w-16 h-16 rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 hover:bg-primary/90 transition-all duration-300 flex items-center justify-center"
+                  onClick={togglePlay}
+                  disabled={!audioUrl}
+                >
+                  {isPlaying ? (
+                    <Pause className="w-7 h-7 fill-current" />
+                  ) : (
+                    <Play className="w-7 h-7 ml-1 fill-current" />
+                  )}
+                </Button>
 
-                  {/* Volume Control */}
-                  <div className="flex items-center gap-2 group bg-secondary/30 p-2 rounded-full px-4">
-                    <button onClick={toggleMute} className="text-muted-foreground hover:text-foreground">
-                      {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                    </button>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={isMuted ? 0 : volume}
-                      onChange={handleVolumeChange}
-                      className="w-20 h-1 bg-muted-foreground/30 rounded-lg appearance-none cursor-pointer accent-foreground"
-                    />
-                  </div>
-                </div>
+                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-white hidden sm:flex">
+                  <Maximize2 className="w-5 h-5" />
+                </Button>
               </div>
-              
+
+              {/* Right Side: Actions */}
+              <div className="flex items-center gap-2 w-32 justify-end">
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  className="text-muted-foreground hover:text-white hover:bg-white/10 rounded-full"
+                  onClick={() => handleDownload(audioUrl, 'audio')}
+                  title="Download Audio"
+                >
+                  <Download className="w-5 h-5" />
+                </Button>
+              </div>
+
             </div>
           </div>
         </div>

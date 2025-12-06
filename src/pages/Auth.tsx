@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+// import { useAuth } from "@/contexts/AuthContext"; // <-- Removed to use direct Supabase client
+import { supabase } from "@/integrations/supabase/client"; // <-- Added this
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,15 +20,28 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
-
-  const { signIn, signUp, user, loading } = useAuth();
+  
   const navigate = useNavigate();
 
+  // Check if already logged in
   useEffect(() => {
-    if (!loading && user) {
-      navigate("/");
-    }
-  }, [user, loading, navigate]);
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        navigate("/");
+      }
+    };
+    checkSession();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        navigate("/");
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [navigate]);
 
   const validateForm = () => {
     try {
@@ -62,7 +76,12 @@ const Auth = () => {
 
     try {
       if (isLogin) {
-        const { error } = await signIn(email, password);
+        // --- DIRECT SUPABASE LOGIN ---
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
         if (error) {
           if (error.message.includes("Invalid login credentials")) {
             toast.error("Invalid email or password");
@@ -74,7 +93,12 @@ const Auth = () => {
           navigate("/");
         }
       } else {
-        const { error } = await signUp(email, password);
+        // --- DIRECT SUPABASE SIGNUP ---
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
         if (error) {
           if (error.message.includes("User already registered")) {
             toast.error("This email is already registered. Please sign in instead.");
@@ -82,24 +106,19 @@ const Auth = () => {
             toast.error(error.message);
           }
         } else {
-          toast.success("Account created successfully!");
-          navigate("/");
+          // Check if Supabase requires email confirmation (default is usually yes)
+          toast.success("Account created successfully!", {
+            description: "Please check your email to confirm your account."
+          });
         }
       }
     } catch (err) {
       toast.error("An unexpected error occurred");
+      console.error(err);
     } finally {
       setIsLoading(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -117,7 +136,7 @@ const Auth = () => {
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
               <Zap className="w-6 h-6 text-primary-foreground" />
             </div>
-            <span className="font-bold text-2xl text-foreground">SynthAI</span>
+            <span className="font-bold text-2xl text-foreground">MuseWeaver</span>
           </div>
 
           {/* Auth Card */}

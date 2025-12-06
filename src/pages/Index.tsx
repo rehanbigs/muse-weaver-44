@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom"; // Added for redirection
+import { supabase } from "@/integrations/supabase/client"; // Added Supabase client
 import { Header } from "@/components/Header";
 import { Hero } from "@/components/Hero";
 import { Features } from "@/components/Features";
@@ -12,7 +14,7 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Music, Scissors, Download, Sparkles } from "lucide-react";
 
-// Placeholder images for demo (Used because the Colab script currently only returns audio)
+// Placeholder images for demo
 const DEMO_IMAGES = [
   "https://images.unsplash.com/photo-1614149162883-504ce4d13909?w=800&q=80",
   "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&q=80",
@@ -31,6 +33,45 @@ const Index = () => {
   const [selectedItem, setSelectedItem] = useState<PlaylistItem | null>(null);
   const [activeTab, setActiveTab] = useState("generator");
 
+  const navigate = useNavigate();
+
+  // ----------------------------------------------------------------
+  // 1. SUPABASE INTEGRATION: Check Auth & Load History on Mount
+  // ----------------------------------------------------------------
+  useEffect(() => {
+    const initPage = async () => {
+      // A. Check if user is logged in
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        // If no user, send them to Auth page
+        navigate("/auth");
+        return;
+      }
+
+      // B. Load User's Generation History
+      const { data, error } = await supabase
+        .from('generations')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (data && !error) {
+        // Map Database structure to App structure
+        const historyItems: PlaylistItem[] = data.map((item: any) => ({
+          id: item.id,
+          prompt: item.prompt,
+          imageUrl: item.image_url || DEMO_IMAGES[0],
+          audioUrl: item.audio_url,
+          createdAt: new Date(item.created_at),
+          duration: item.duration || "0:15"
+        }));
+        setPlaylist(historyItems);
+      }
+    };
+
+    initPage();
+  }, [navigate]);
+
   const handleGenerate = async (prompt: string) => {
     setIsGenerating(true);
     toast.info("Connecting to AI Brain...", {
@@ -40,16 +81,16 @@ const Index = () => {
     try {
       // ------------------------------------------------------------------
       // 👇👇👇 PASTE YOUR COLAB NGROK URL HERE 👇👇👇
-      // Example: "https://a1b2-34-56.ngrok-free.app/generate"
       const API_URL = "https://javon-nonvenal-terrie.ngrok-free.dev/generate"; 
       // ------------------------------------------------------------------
 
+      // 1. Generate via Colab
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           prompt: prompt,
-          duration: 15 // Duration in seconds
+          duration: 15 
         }),
       });
 
@@ -59,32 +100,54 @@ const Index = () => {
 
       const data = await response.json();
 
-      // data.audio is a base64 string from Colab
-      // We pick a random image because the current backend only generates music
       const randomImage = DEMO_IMAGES[Math.floor(Math.random() * DEMO_IMAGES.length)];
 
       const newResult = {
         imageUrl: randomImage,
-        audioUrl: data.audio, // Real audio from AI!
+        audioUrl: data.audio,
         prompt,
       };
       
       setResult(newResult);
       
-      // Add to playlist
-      const newItem: PlaylistItem = {
-        id: Date.now().toString(),
-        prompt,
-        imageUrl: newResult.imageUrl,
-        audioUrl: newResult.audioUrl,
-        createdAt: new Date(),
-        duration: "0:15",
-      };
-      setPlaylist((prev) => [newItem, ...prev]);
-      
-      toast.success("Creation complete!", {
-        description: "AI Music generated successfully.",
-      });
+      // ----------------------------------------------------------------
+      // 2. SUPABASE INTEGRATION: Save to Database
+      // ----------------------------------------------------------------
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        // Insert into Supabase 'generations' table
+        const { data: insertedData, error } = await supabase
+          .from('generations')
+          .insert({
+            user_id: user.id,
+            prompt: prompt,
+            audio_url: newResult.audioUrl, // Storing Base64 (Heavy but works for MVP)
+            image_url: newResult.imageUrl,
+            duration: "0:15"
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error("Error saving to DB:", error);
+          toast.warning("Music generated, but failed to save to history.");
+        } else if (insertedData) {
+          // Add to local playlist state using the REAL Database ID
+          const newItem: PlaylistItem = {
+            id: insertedData.id,
+            prompt: insertedData.prompt,
+            imageUrl: insertedData.image_url,
+            audioUrl: insertedData.audio_url,
+            createdAt: new Date(insertedData.created_at),
+            duration: "0:15",
+          };
+          setPlaylist((prev) => [newItem, ...prev]);
+          toast.success("Creation complete!", {
+            description: "Saved to your history.",
+          });
+        }
+      }
 
     } catch (error) {
       console.error("Generation failed:", error);
@@ -105,15 +168,24 @@ const Index = () => {
     }
   };
 
-  const handleDeleteItem = (id: string) => {
+  const handleDeleteItem = async (id: string) => {
+    // Optimistic UI update
+    const previousPlaylist = [...playlist];
     setPlaylist((prev) => prev.filter((item) => item.id !== id));
-    if (selectedItem?.id === id) {
-      setSelectedItem(null);
+    
+    // Cleanup UI selection
+    if (selectedItem?.id === id) setSelectedItem(null);
+    if (currentlyPlaying === id) setCurrentlyPlaying(undefined);
+
+    // Delete from Database
+    const { error } = await supabase.from('generations').delete().eq('id', id);
+    
+    if (error) {
+      toast.error("Failed to delete from history");
+      setPlaylist(previousPlaylist); // Revert if failed
+    } else {
+      toast.success("Removed from playlist");
     }
-    if (currentlyPlaying === id) {
-      setCurrentlyPlaying(undefined);
-    }
-    toast.success("Removed from playlist");
   };
 
   const handleSelectItem = (item: PlaylistItem) => {
