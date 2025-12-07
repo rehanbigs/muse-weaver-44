@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom"; // Added for redirection
-import { supabase } from "@/integrations/supabase/client"; // Added Supabase client
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { Hero } from "@/components/Hero";
 import { Features } from "@/components/Features";
@@ -14,12 +14,8 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Music, Scissors, Download, Sparkles } from "lucide-react";
 
-// Placeholder images for demo
-const DEMO_IMAGES = [
-  "https://images.unsplash.com/photo-1614149162883-504ce4d13909?w=800&q=80",
-  "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&q=80",
-  "https://images.unsplash.com/photo-1634017839464-5c339afa60f6?w=800&q=80",
-];
+// Fallback image in case AI generation fails
+const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1614149162883-504ce4d13909?w=800&q=80";
 
 const Index = () => {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -35,32 +31,26 @@ const Index = () => {
 
   const navigate = useNavigate();
 
-  // ----------------------------------------------------------------
   // 1. SUPABASE INTEGRATION: Check Auth & Load History on Mount
-  // ----------------------------------------------------------------
   useEffect(() => {
     const initPage = async () => {
-      // A. Check if user is logged in
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
-        // If no user, send them to Auth page
         navigate("/auth");
         return;
       }
 
-      // B. Load User's Generation History
       const { data, error } = await supabase
         .from('generations')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (data && !error) {
-        // Map Database structure to App structure
         const historyItems: PlaylistItem[] = data.map((item: any) => ({
           id: item.id,
           prompt: item.prompt,
-          imageUrl: item.image_url || DEMO_IMAGES[0],
+          imageUrl: item.image_url || FALLBACK_IMAGE,
           audioUrl: item.audio_url,
           createdAt: new Date(item.created_at),
           duration: item.duration || "0:15"
@@ -75,16 +65,25 @@ const Index = () => {
   const handleGenerate = async (prompt: string) => {
     setIsGenerating(true);
     toast.info("Connecting to AI Brain...", {
-      description: "Generating high-quality audio takes about 20-30 seconds.",
+      description: "Generating AI Art & Music. This takes about 30-40 seconds.",
     });
 
     try {
-      // ------------------------------------------------------------------
-      // 👇👇👇 PASTE YOUR COLAB NGROK URL HERE 👇👇👇
-      const API_URL = "https://javon-nonvenal-terrie.ngrok-free.dev/generate"; 
-      // ------------------------------------------------------------------
+      // A. Get dynamic URL from Supabase
+      const { data: configData, error: configError } = await supabase
+        .from('system_config')
+        .select('value')
+        .eq('key', 'ngrok_url')
+        .single();
 
-      // 1. Generate via Colab
+      if (configError || !configData?.value) {
+        throw new Error("Could not find active AI Server. Is Colab running?");
+      }
+
+      const API_URL = `${configData.value}/generate`;
+      console.log("Using Dynamic API URL:", API_URL);
+
+      // B. Call the Backend
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,40 +99,35 @@ const Index = () => {
 
       const data = await response.json();
 
-      const randomImage = DEMO_IMAGES[Math.floor(Math.random() * DEMO_IMAGES.length)];
+      // C. Handle Response (Image + Audio)
+      // If the backend returns an empty string for image (error fallback), use local fallback
+      const finalImage = data.image && data.image.length > 100 ? data.image : FALLBACK_IMAGE;
 
       const newResult = {
-        imageUrl: randomImage,
+        imageUrl: finalImage,
         audioUrl: data.audio,
         prompt,
       };
       
       setResult(newResult);
       
-      // ----------------------------------------------------------------
-      // 2. SUPABASE INTEGRATION: Save to Database
-      // ----------------------------------------------------------------
+      // D. Save to Supabase History
       const { data: { user } } = await supabase.auth.getUser();
 
       if (user) {
-        // Insert into Supabase 'generations' table
         const { data: insertedData, error } = await supabase
           .from('generations')
           .insert({
             user_id: user.id,
             prompt: prompt,
-            audio_url: newResult.audioUrl, // Storing Base64 (Heavy but works for MVP)
-            image_url: newResult.imageUrl,
+            audio_url: newResult.audioUrl, 
+            image_url: newResult.imageUrl, // Save the Base64 image string
             duration: "0:15"
           })
           .select()
           .single();
 
-        if (error) {
-          console.error("Error saving to DB:", error);
-          toast.warning("Music generated, but failed to save to history.");
-        } else if (insertedData) {
-          // Add to local playlist state using the REAL Database ID
+        if (insertedData) {
           const newItem: PlaylistItem = {
             id: insertedData.id,
             prompt: insertedData.prompt,
@@ -152,13 +146,14 @@ const Index = () => {
     } catch (error) {
       console.error("Generation failed:", error);
       toast.error("Generation Failed", {
-        description: "Check if Colab is running and the Ngrok URL is correct.",
+        description: "Check if Colab is running. We couldn't connect to the GPU.",
       });
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // --- Helpers for Playlist & Editor ---
   const handlePlayItem = (item: PlaylistItem) => {
     if (currentlyPlaying === item.id) {
       setCurrentlyPlaying(undefined);
@@ -169,20 +164,17 @@ const Index = () => {
   };
 
   const handleDeleteItem = async (id: string) => {
-    // Optimistic UI update
     const previousPlaylist = [...playlist];
     setPlaylist((prev) => prev.filter((item) => item.id !== id));
     
-    // Cleanup UI selection
     if (selectedItem?.id === id) setSelectedItem(null);
     if (currentlyPlaying === id) setCurrentlyPlaying(undefined);
 
-    // Delete from Database
     const { error } = await supabase.from('generations').delete().eq('id', id);
     
     if (error) {
       toast.error("Failed to delete from history");
-      setPlaylist(previousPlaylist); // Revert if failed
+      setPlaylist(previousPlaylist);
     } else {
       toast.success("Removed from playlist");
     }
@@ -190,6 +182,7 @@ const Index = () => {
 
   const handleSelectItem = (item: PlaylistItem) => {
     setSelectedItem(item);
+    // When selecting from playlist, load it into the main player/editor
     setResult({
       imageUrl: item.imageUrl,
       audioUrl: item.audioUrl,
@@ -225,7 +218,6 @@ const Index = () => {
               Generate, edit, and manage your AI-powered music and visuals all in one place.
             </p>
 
-            {/* Tabs for different sections */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full max-w-xl mx-auto grid-cols-4 mb-8">
                 <TabsTrigger value="generator" className="flex items-center gap-2">
@@ -248,7 +240,12 @@ const Index = () => {
 
               <TabsContent value="generator" className="space-y-8">
                 <GeneratorForm onGenerate={handleGenerate} isGenerating={isGenerating} />
-                <OutputDisplay {...result} />
+                {/* This will now display the AI generated Image AND Audio */}
+                <OutputDisplay 
+                  imageUrl={result.imageUrl} 
+                  audioUrl={result.audioUrl} 
+                  prompt={result.prompt} 
+                />
               </TabsContent>
 
               <TabsContent value="playlist">
